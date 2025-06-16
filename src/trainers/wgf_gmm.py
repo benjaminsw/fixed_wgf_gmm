@@ -65,7 +65,8 @@ def particles_to_gmm(particles: jax.Array,
         # Initialize each particle as a Gaussian component
         means = particles
         # Start with small identity covariance to avoid degeneracy
-        covs = np.tile(np.eye(d_z) * 0.1, (n_particles, 1, 1))
+        # Change from 0.1 to larger value:
+        covs = np.tile(np.eye(d_z) * 0.5, (n_particles, 1, 1))  # Use 0.5 instead of 0.1
         
         return GMMState(
             means=means,
@@ -215,15 +216,7 @@ def gmm_to_particles(gmm_state: GMMState) -> jax.Array:
 def sample_from_gmm(key: jax.random.PRNGKey, gmm_state: GMMState, 
                    n_samples: int) -> jax.Array:
     """
-    Sample from a GMM - JAX-compatible version.
-    
-    Args:
-        key: PRNG key
-        gmm_state: GMM state
-        n_samples: Number of samples
-        
-    Returns:
-        Samples from the GMM, shape (n_samples, d_z)
+    Sample from a GMM - JAX-compatible version with differentiable sampling.
     """
     # Sample component indices
     key, subkey = jax.random.split(key)
@@ -238,8 +231,20 @@ def sample_from_gmm(key: jax.random.PRNGKey, gmm_state: GMMState,
     def sample_from_component(idx, noise_sample):
         mean = gmm_state.means[idx]
         cov = gmm_state.covs[idx]
-        L = np.linalg.cholesky(cov + 1e-6 * np.eye(cov.shape[0]))
-        return mean + L @ noise_sample
+        
+        # FIXED: Use JAX's built-in Cholesky which is more autodiff-friendly
+        try:
+            # Add regularization for numerical stability
+            reg_cov = cov + 1e-5 * np.eye(cov.shape[0])
+            L = jax.scipy.linalg.cholesky(reg_cov, lower=True)
+            return mean + L @ noise_sample
+        except:
+            # Fallback: use matrix square root via eigendecomposition but more carefully
+            eigvals, eigvecs = np.linalg.eigh(cov)
+            # Clamp eigenvalues to be positive with larger minimum
+            eigvals = np.maximum(eigvals, 1e-4)  
+            sqrt_cov = eigvecs @ np.diag(np.sqrt(eigvals)) @ eigvecs.T
+            return mean + sqrt_cov @ noise_sample
     
     # Vectorized sampling
     samples = vmap(sample_from_component)(component_indices, noise)
@@ -366,6 +371,86 @@ def sinkhorn_weights_update(weights: jax.Array, grad_weights: jax.Array,
     return weights_new
 
 
+def debug_objective_components(means, covs, weights, grad_key, pid, target, gmm_state, y, hyperparams, lambda_reg):
+    """Debug each component of the objective function"""
+    
+    # Test if basic GMM construction works
+    try:
+        temp_gmm = GMMState(
+            means=means,
+            covs=covs, 
+            weights=weights,
+            n_components=means.shape[0],
+            prev_means=gmm_state.prev_means,
+            prev_covs=gmm_state.prev_covs,
+            prev_weights=gmm_state.prev_weights
+        )
+        print("✓ GMM construction OK")
+    except Exception as e:
+        print("✗ GMM construction failed:", e)
+        return
+    
+    # Test sampling from GMM
+    try:
+        key, subkey = jax.random.split(grad_key)
+        samples = sample_from_gmm(subkey, temp_gmm, hyperparams.mc_n_samples)
+        print("✓ GMM sampling OK, sample shape:", samples.shape)
+        print("  Sample stats: min=", float(np.min(samples)), "max=", float(np.max(samples)))
+        if np.any(np.isnan(samples)) or np.any(np.isinf(samples)):
+            print("✗ NaN/Inf in samples!")
+            return
+    except Exception as e:
+        print("✗ GMM sampling failed:", e)
+        return
+    
+    # Test log probabilities
+    try:
+        logq = vmap(pid.log_prob, (0, None))(samples, y)
+        print("✓ Log q OK, shape:", logq.shape)
+        print("  Log q stats: min=", float(np.min(logq)), "max=", float(np.max(logq)))
+        if np.any(np.isnan(logq)) or np.any(np.isinf(logq)):
+            print("✗ NaN/Inf in logq!")
+            return
+    except Exception as e:
+        print("✗ Log q computation failed:", e)
+        return
+        
+    try:
+        logp = vmap(target.log_prob, (0, None))(samples, y)
+        print("✓ Log p OK, shape:", logp.shape) 
+        print("  Log p stats: min=", float(np.min(logp)), "max=", float(np.max(logp)))
+        if np.any(np.isnan(logp)) or np.any(np.isinf(logp)):
+            print("✗ NaN/Inf in logp!")
+            return
+    except Exception as e:
+        print("✗ Log p computation failed:", e)
+        return
+    
+    # Test ELBO computation
+    try:
+        elbo = np.mean(logp - logq)
+        print("✓ ELBO OK:", float(elbo))
+        if np.isnan(elbo) or np.isinf(elbo):
+            print("✗ NaN/Inf in ELBO!")
+            return
+    except Exception as e:
+        print("✗ ELBO computation failed:", e)
+        return
+    
+    # Test full objective
+    try:
+        obj_val = compute_elbo_with_wasserstein_regularization(
+            grad_key, pid, target, temp_gmm, y, hyperparams, lambda_reg
+        )
+        print("✓ Full objective OK:", float(obj_val))
+        if np.isnan(obj_val) or np.isinf(obj_val):
+            print("✗ NaN/Inf in objective!")
+            return
+    except Exception as e:
+        print("✗ Full objective failed:", e)
+        return
+
+
 def wgf_gmm_pvi_step(key: jax.random.PRNGKey,
                     carry: PIDCarry,
                     target: Target,
@@ -402,8 +487,13 @@ def wgf_gmm_pvi_step(key: jax.random.PRNGKey,
     if carry.gmm_state is None:
         # Initialize GMM from particles
         gmm_state = particles_to_gmm(pid.particles, use_em=False, n_components=None)
+
+        # Right after particles_to_gmm initialization:
+        print("Initial cov determinants:", [float(np.linalg.det(cov)) for cov in gmm_state.covs[:3]])
+        print("Initial cov condition numbers:", [float(np.linalg.cond(cov)) for cov in gmm_state.covs[:3]])
     else:
         gmm_state = carry.gmm_state
+
     
     # Step 3: Define objective function for gradients
     def objective_fn(means, covs, weights):
@@ -420,11 +510,37 @@ def wgf_gmm_pvi_step(key: jax.random.PRNGKey,
             grad_key, pid, target, temp_gmm, y, hyperparams, lambda_reg
         )
     
-    # Compute gradients
-    grad_fn = jax.grad(objective_fn, argnums=(0, 1, 2))
-    mean_grads, cov_grads, weight_grads = grad_fn(
-        gmm_state.means, gmm_state.covs, gmm_state.weights
+    # ADD DEBUGGING HERE
+    print("=== DEBUGGING OBJECTIVE FUNCTION ===")
+    debug_objective_components(
+        gmm_state.means, gmm_state.covs, gmm_state.weights,
+        grad_key, pid, target, gmm_state, y, hyperparams, lambda_reg
     )
+
+    print("=== TESTING GRADIENT COMPUTATION ===")
+    # Test gradient computation with simpler function first
+    def simple_test_fn(means, covs, weights):
+        return np.sum(means**2) + np.sum(covs**2) + np.sum(weights**2)
+
+    try:
+        simple_grad_fn = jax.grad(simple_test_fn, argnums=(0, 1, 2))
+        simple_grads = simple_grad_fn(gmm_state.means, gmm_state.covs, gmm_state.weights)
+        print("✓ Simple gradient computation works")
+    except Exception as e:
+        print("✗ Simple gradient computation failed:", e)
+
+    # Now test your actual objective
+    try:
+        grad_fn = jax.grad(objective_fn, argnums=(0, 1, 2))
+        mean_grads, cov_grads, weight_grads = grad_fn(
+            gmm_state.means, gmm_state.covs, gmm_state.weights
+        )
+        print("✓ Actual gradient computation works")
+    except Exception as e:
+        print("✗ Actual gradient computation failed:", e)
+        # Return early if gradient computation fails
+        return lval, carry
+    
     ###############################
     # LOG GRADIENT NORMS BEFORE CLIPPING
     mean_grad_norms = np.linalg.norm(mean_grads, axis=1)

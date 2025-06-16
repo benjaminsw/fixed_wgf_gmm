@@ -11,7 +11,7 @@ experiment:
     n_updates: 15000
     name: 'default'
     compute_metrics: False
-    use_jit: False #True for debugging 
+    use_jit: False
 
 pvi:
     algorithm: 'pvi'
@@ -42,14 +42,14 @@ wgf_gmm:
         optimizer: 'rmsprop'
         lr_decay: False
         regularization: 1e-8
-        clip: True  # Enable gradient clipping
-        max_clip: 1e-3  # Clip gradients to max norm of 1.0
+        clip: True
+        max_clip: 1e-2  # Increased clipping threshold
     r_opt:
-        lr: 1e-7
+        lr: 1e-8  # Reduced from 1e-7
         regularization: 1e-8
     r_precon:
         type: 'rms'
-        max_norm: 1.
+        max_norm: 0.1  # Reduced from 1.0
         agg: 'mean'
     extra_alg:
 
