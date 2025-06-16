@@ -20,7 +20,7 @@ from src.trainers.sm import de_step as sm_de_step
 
 # Import fixed WGF-GMM implementation
 try:
-    from src.trainers.wgf_gmm import wgf_gmm_pvi_step, gmm_pvi_step
+    from src.trainers.wgf_gmm import wgf_gmm_pvi_step
     WGF_GMM_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Could not import WGF-GMM implementation: {e}")
@@ -105,7 +105,6 @@ def gmm_pvi_de_step(key, carry, target, y, optim, hyperparams):
 DE_STEPS = {
     'pvi': pvi_de_step,
     'wgf_gmm': wgf_gmm_de_step,
-    'gmm_pvi': gmm_pvi_de_step,
     'svi': svi_de_step,
     'uvi': uvi_de_step,
     'sm': sm_de_step
