@@ -223,17 +223,19 @@ def make_step_and_carry(
     
     id_state = eqx.filter(id, id.get_filter_spec())
     
-    # Handle PVI-based algorithms (pvi, wgf_gmm, gmm_pvi) the same way
-    if parameters.algorithm in ['pvi', 'wgf_gmm', 'gmm_pvi']:
+    # Handle PVI-based algorithms (pvi, wgf_gmm) the same way
+    # In the make_step_and_carry function, update the PIDCarry creation:
+    if parameters.algorithm in ['pvi', 'wgf_gmm']:
         ropt_key, key = jax.random.split(key, 2)
         r_optim = make_r_opt(ropt_key,
-                             parameters.r_opt_parameters)
+                            parameters.r_opt_parameters)
         r_precon = make_r_precon(parameters.r_precon_parameters)
         optim = PIDOpt(theta_optim, r_optim, r_precon)
         carry = PIDCarry(id,
-                         theta_optim.init(id_state),
-                         r_optim.init(id_state),
-                         r_precon.init(id))
+                        theta_optim.init(id_state),
+                        r_optim.init(id_state),
+                        r_precon.init(id),
+                        gmm_state=None)  # Add gmm_state parameter
     elif parameters.algorithm == 'uvi':
         optim = SVIOpt(theta_optim)
         carry = SVICarry(id, theta_optim.init(id_state))
@@ -281,8 +283,8 @@ def config_to_parameters(config: dict, algorithm: str):
             **config[algorithm]['theta_opt']
         )
     
-    # Handle PVI-based algorithms (pvi, wgf_gmm, gmm_pvi) the same way
-    if algorithm in ['pvi', 'wgf_gmm', 'gmm_pvi']:
+    # Handle PVI-based algorithms (pvi, wgf_gmm) the same way
+    if algorithm in ['pvi', 'wgf_gmm']:
         parameters['r_opt_parameters'] = ROptParameters(
             **config[algorithm]['r_opt']
         )

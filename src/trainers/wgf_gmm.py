@@ -399,7 +399,7 @@ def wgf_gmm_pvi_step(key: jax.random.PRNGKey,
     )
     
     # Step 2: Convert particles to GMM representation
-    if not hasattr(carry, 'gmm_state') or carry.gmm_state is None:
+    if carry.gmm_state is None:
         # Initialize GMM from particles
         gmm_state = particles_to_gmm(pid.particles, use_em=False, n_components=None)
     else:
@@ -452,15 +452,13 @@ def wgf_gmm_pvi_step(key: jax.random.PRNGKey,
     updated_particles = gmm_to_particles(updated_gmm_state)
     pid = eqx.tree_at(lambda tree: tree.particles, pid, updated_particles)
     
-    # Create updated carry
+    # Create updated carry with GMM state included in constructor
     updated_carry = PIDCarry(
         id=pid,
         theta_opt_state=theta_opt_state,
         r_opt_state=carry.r_opt_state,
-        r_precon_state=carry.r_precon_state
+        r_precon_state=carry.r_precon_state,
+        gmm_state=updated_gmm_state  # Pass gmm_state in constructor
     )
-    
-    # Store GMM state in carry
-    updated_carry.gmm_state = updated_gmm_state
     
     return lval, updated_carry
