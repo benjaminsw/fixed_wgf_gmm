@@ -116,6 +116,7 @@ class PIDCarry(NamedTuple):
     theta_opt_state: OptState
     r_opt_state: OptState
     r_precon_state: OptState
+    gmm_state: Any = None 
 
 
 class CVState(NamedTuple):
