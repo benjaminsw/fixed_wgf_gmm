@@ -42,7 +42,8 @@ wgf_gmm:
         optimizer: 'rmsprop'
         lr_decay: False
         regularization: 1e-8
-        clip: False
+        clip: True      # Add this
+        max_clip: 1.0   # Add this
     r_opt:
         lr: 1e-3
         regularization: 1e-8

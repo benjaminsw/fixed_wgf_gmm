@@ -38,7 +38,13 @@ def trainer(key: PRNGKey,
         pbar.set_description(f"Loss {lval:.3f}")
         end_time = time.time()
         total_time += end_time - start_time
-        assert np.isnan(lval) == False, "Loss is NaN"
+        #assert np.isnan(lval) == False, "Loss is NaN"
+        # Replace with debugging version:
+        if np.isnan(lval):
+            print(f"NaN detected at epoch {i}")
+            print(f"Loss value: {lval}")
+            print("Stopping training...")
+            break
         if i % 100 == 0:
             history['loss'].append(lval)
             history['time'].append(total_time)

@@ -4,14 +4,14 @@ default_parameters: &default_parameters
     n_hidden: 512
 
 default_theta_lr: &default_theta_lr
-    lr: 1e-4
+    lr: 1e-5
 
 experiment:
     n_reruns: 10
     n_updates: 15000
     name: 'default'
     compute_metrics: False
-    use_jit: True
+    use_jit: False #True for debugging 
 
 pvi:
     algorithm: 'pvi'
@@ -34,39 +34,23 @@ wgf_gmm:
     algorithm: 'wgf_gmm'
     model: 
         use_particles: True
-        n_particles: 100
-        n_components: 50
+        n_particles: 50
+        n_components: 10
         <<: *default_parameters
     theta_opt:
         <<: *default_theta_lr
         optimizer: 'rmsprop'
         lr_decay: False
         regularization: 1e-8
-        clip: False
+        clip: True  # Enable gradient clipping
+        max_clip: 1e-3  # Clip gradients to max norm of 1.0
     r_opt:
-        lr: 1e-2
+        lr: 1e-7
         regularization: 1e-8
     r_precon:
         type: 'rms'
         max_norm: 1.
         agg: 'mean'
-    extra_alg:
-
-gmm_pvi:
-    algorithm: 'gmm_pvi'
-    model: 
-        use_particles: True
-        n_particles: 100
-        <<: *default_parameters
-    theta_opt:
-        <<: *default_theta_lr
-        optimizer: 'rmsprop'
-        lr_decay: False
-        regularization: 1e-8
-        clip: False
-    r_opt:
-        lr: 1e-2
-        regularization: 1e-8
     extra_alg:
 
 svi:

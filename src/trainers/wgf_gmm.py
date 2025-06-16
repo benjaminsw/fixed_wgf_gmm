@@ -337,7 +337,7 @@ def riemannian_grad_cov(euclidean_grad_cov: jax.Array, cov: jax.Array) -> jax.Ar
     """Riemannian gradient for covariance matrix."""
     product = euclidean_grad_cov @ cov
     symmetric_product = (product + product.T) / 2
-    return 4 * symmetric_product
+    return symmetric_product #return 4 * symmetric_product
 
 
 def retraction_cov(cov: jax.Array, tangent_vector: jax.Array) -> jax.Array:
@@ -425,6 +425,15 @@ def wgf_gmm_pvi_step(key: jax.random.PRNGKey,
     mean_grads, cov_grads, weight_grads = grad_fn(
         gmm_state.means, gmm_state.covs, gmm_state.weights
     )
+    ###############################
+    # LOG GRADIENT NORMS BEFORE CLIPPING
+    mean_grad_norms = np.linalg.norm(mean_grads, axis=1)
+    cov_grad_norms = np.linalg.norm(cov_grads.reshape(cov_grads.shape[0], -1), axis=1)
+    weight_grad_norm = np.linalg.norm(weight_grads)
+    print("BEFORE clipping - Mean grad norms: max=", float(np.max(mean_grad_norms)), "mean=", float(np.mean(mean_grad_norms)))
+    print("BEFORE clipping - Cov grad norms: max=", float(np.max(cov_grad_norms)), "mean=", float(np.mean(cov_grad_norms)))
+    print("BEFORE clipping - Weight grad norm:", float(weight_grad_norm))
+    ###############################
     
     # Step 4: Update parameters using Riemannian gradients
     # Update means
@@ -434,9 +443,30 @@ def wgf_gmm_pvi_step(key: jax.random.PRNGKey,
     riem_cov_grads = vmap(riemannian_grad_cov)(cov_grads, gmm_state.covs)
     new_covs = vmap(retraction_cov)(gmm_state.covs, -lr_cov * riem_cov_grads)
     
+    ###############################
+    # LOG RIEMANNIAN GRADIENT NORMS
+    riem_cov_grad_norms = np.linalg.norm(riem_cov_grads.reshape(riem_cov_grads.shape[0], -1), axis=1)
+    print(f"AFTER Riemannian - Cov grad norms: max={np.max(riem_cov_grad_norms):.3e}, mean={np.mean(riem_cov_grad_norms):.3e}")
+    ###############################
+
+
     # Update weights using Sinkhorn
     new_weights = sinkhorn_weights_update(gmm_state.weights, weight_grads, lr_weight)
     
+    ###############################
+    # LOG PARAMETER CHANGES
+    mean_changes = np.linalg.norm(new_means - gmm_state.means, axis=1)
+    weight_changes = np.linalg.norm(new_weights - gmm_state.weights)
+    print(f"Parameter changes - Means: max={np.max(mean_changes):.3e}")
+    print(f"Parameter changes - Weights: {weight_changes:.3e}")
+
+    # CHECK FOR NAN/INF IN NEW PARAMETERS
+    if np.any(np.isnan(new_means)) or np.any(np.isinf(new_means)):
+        print("WARNING: NaN/Inf in new_means!")
+    if np.any(np.isnan(new_covs)) or np.any(np.isinf(new_covs)):
+        print("WARNING: NaN/Inf in new_covs!")
+    ###############################
+
     # Create updated GMM state
     updated_gmm_state = GMMState(
         means=new_means,
