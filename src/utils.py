@@ -34,11 +34,10 @@ import re
 def wgf_gmm_de_step(key, carry, target, y, optim, hyperparams):
     """
     Wrapper for WGF-GMM PVI step to match the standard de_step interface.
+    No fallback - will raise errors if WGF-GMM fails.
     """
     if not WGF_GMM_AVAILABLE:
-        # Fallback to standard PVI if WGF-GMM is not available
-        print("Warning: WGF-GMM not available, falling back to standard PVI")
-        return pvi_de_step(key, carry, target, y, optim, hyperparams)
+        raise ImportError("WGF-GMM implementation is not available")
     
     # Handle the gmm_state attribute that WGF-GMM expects
     if not hasattr(carry, 'gmm_state'):
@@ -55,50 +54,41 @@ def wgf_gmm_de_step(key, carry, target, y, optim, hyperparams):
     else:
         extended_carry = carry
     
-    # Call the WGF-GMM implementation
-    try:
-        lval, updated_extended_carry = wgf_gmm_pvi_step(
-            key=key,
-            carry=extended_carry,
-            target=target,
-            y=y,
-            optim=optim,
-            hyperparams=hyperparams,
-            lambda_reg=0.1,    # Wasserstein regularization strength
-            lr_mean=0.01,      # Learning rate for means
-            lr_cov=0.001,      # Learning rate for covariances
-            lr_weight=0.01     # Learning rate for weights
-        )
-        
-        # Convert back to standard PIDCarry format
-        updated_carry = type(carry)(
-            id=updated_extended_carry.id,
-            theta_opt_state=updated_extended_carry.theta_opt_state,
-            r_opt_state=updated_extended_carry.r_opt_state,
-            r_precon_state=updated_extended_carry.r_precon_state
-        )
-        
-        return lval, updated_carry
-        
-    except Exception as e:
-        print(f"Warning: WGF-GMM failed with error {e}, falling back to standard PVI")
-        return pvi_de_step(key, carry, target, y, optim, hyperparams)
+    # Call the WGF-GMM implementation - no try/catch, let errors propagate
+    lval, updated_extended_carry = wgf_gmm_pvi_step(
+        key=key,
+        carry=extended_carry,
+        target=target,
+        y=y,
+        optim=optim,
+        hyperparams=hyperparams,
+        lambda_reg=0.1,    # Wasserstein regularization strength
+        lr_mean=0.01,      # Learning rate for means
+        lr_cov=0.001,      # Learning rate for covariances
+        lr_weight=0.01     # Learning rate for weights
+    )
+    
+    # Convert back to standard PIDCarry format
+    updated_carry = type(carry)(
+        id=updated_extended_carry.id,
+        theta_opt_state=updated_extended_carry.theta_opt_state,
+        r_opt_state=updated_extended_carry.r_opt_state,
+        r_precon_state=updated_extended_carry.r_precon_state
+    )
+    
+    return lval, updated_carry
 
 
 def gmm_pvi_de_step(key, carry, target, y, optim, hyperparams):
     """
     Wrapper for GMM-PVI step (simplified version).
+    No fallback - will raise errors if GMM-PVI fails.
     """
     if not WGF_GMM_AVAILABLE:
-        # Fallback to standard PVI if GMM-PVI is not available
-        print("Warning: GMM-PVI not available, falling back to standard PVI")
-        return pvi_de_step(key, carry, target, y, optim, hyperparams)
+        raise ImportError("GMM-PVI implementation is not available")
     
-    try:
-        return gmm_pvi_step(key, carry, target, y, optim, hyperparams)
-    except Exception as e:
-        print(f"Warning: GMM-PVI failed with error {e}, falling back to standard PVI")
-        return pvi_de_step(key, carry, target, y, optim, hyperparams)
+    # For now, just call the WGF-GMM implementation
+    return wgf_gmm_de_step(key, carry, target, y, optim, hyperparams)
 
 
 # Update DE_STEPS to include both WGF-GMM and GMM-PVI
