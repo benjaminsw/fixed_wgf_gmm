@@ -4,7 +4,7 @@ default_parameters: &default_parameters
     n_hidden: 512
 
 default_theta_lr: &default_theta_lr
-    lr: 1e-4
+    lr: 1e-5
 
 experiment:
     n_reruns: 10
@@ -44,7 +44,7 @@ wgf_gmm:
         regularization: 1e-8
         clip: False
     r_opt:
-        lr: 1e-2
+        lr: 1e-3
         regularization: 1e-8
     r_precon:
         type: 'rms'
