@@ -4,11 +4,11 @@ default_parameters: &default_parameters
     n_hidden: 512
 
 default_theta_lr: &default_theta_lr
-    lr: 1e-5
+    lr: 1e-2
 
 experiment:
     n_reruns: 10
-    n_updates: 15000
+    n_updates: 1000
     name: 'default'
     compute_metrics: False
     use_jit: False #True for debugging 
@@ -40,7 +40,7 @@ wgf_gmm:
     theta_opt:
         <<: *default_theta_lr
         optimizer: 'rmsprop'
-        lr_decay: False
+        lr_decay: True
         regularization: 1e-8
         clip: True  # Enable gradient clipping
         max_clip: 1e-3  # Clip gradients to max norm of 1.0
