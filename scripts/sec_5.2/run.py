@@ -1,3 +1,4 @@
+######
 from tqdm import tqdm
 import typer
 from src.problems.toy import *
@@ -83,10 +84,40 @@ def visualize(key,
         plt.savefig(path / 'pvi' / f"{prefix}_pdf.pdf")
 
     for alg, id in ids.items():
+        print(f"\n=== VISUALIZING {alg} ===")
         plt.clf()
         m_key, t_key, key = jax.random.split(key, 3)
-        model_samples = id.sample(m_key, 100, None)
-        target_samples = target.sample(t_key, 100, None)
+        
+        # Sample with error handling
+        try:
+            model_samples = id.sample(m_key, 100, None)
+            target_samples = target.sample(t_key, 100, None)
+            
+            # Check for NaN/Inf values
+            if np.any(np.isnan(model_samples)) or np.any(np.isinf(model_samples)):
+                print(f"WARNING: {alg} model samples contain NaN/Inf values. Stats:")
+                print(f"  Shape: {model_samples.shape}")
+                print(f"  NaN count: {np.sum(np.isnan(model_samples))}")
+                print(f"  Inf count: {np.sum(np.isinf(model_samples))}")
+                print(f"  Min: {np.nanmin(model_samples)}")
+                print(f"  Max: {np.nanmax(model_samples)}")
+                # Skip this algorithm's visualization
+                continue
+                
+            if np.any(np.isnan(target_samples)) or np.any(np.isinf(target_samples)):
+                print(f"WARNING: Target samples contain NaN/Inf values. Skipping {alg} visualization.")
+                continue
+                
+            print(f"✓ {alg} sampling test passed (100 samples)")
+            print(f"  Model samples range: [{np.min(model_samples):.3f}, {np.max(model_samples):.3f}]")
+            print(f"  Target samples range: [{np.min(target_samples):.3f}, {np.max(target_samples):.3f}]")
+                
+        except Exception as e:
+            print(f"ERROR: Failed to sample from {alg}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+            
         c = plt.contour(XX,
                         YY,
                         np.exp(log_true_ZZ),
@@ -95,23 +126,62 @@ def visualize(key,
         plt.scatter(model_samples[..., 0],
                     model_samples[..., 1],
                     alpha=0.5,
-                    label='Samples')
+                    label='Model Samples')
         plt.scatter(target_samples[..., 0],
                     target_samples[..., 1],
                     alpha=0.5,
-                    label='Samples')
+                    label='Target Samples')
+        
+        # Create algorithm-specific directory
+        (path / f'{alg}').mkdir(exist_ok=True, parents=True)
         plt.savefig(path / f'{alg}' / f"{prefix}_samples.pdf")
 
+        # ECDF plot with additional error handling
         plt.clf()
-        model_samples = id.sample(key, 10000, None)
-        plt.hist2d(model_samples[:, 0],
-                   model_samples[:, 1],
-                   bins=100,
-                   cmap='Blues',
-                   label='Samples')
+        try:
+            print(f"Attempting large sample (10000) from {alg}...")
+            model_samples_large = id.sample(key, 10000, None)
+            
+            # Check for NaN/Inf values in large sample
+            if np.any(np.isnan(model_samples_large)) or np.any(np.isinf(model_samples_large)):
+                print(f"WARNING: {alg} large model samples contain NaN/Inf values.")
+                print(f"  NaN count: {np.sum(np.isnan(model_samples_large))}")
+                print(f"  Inf count: {np.sum(np.isinf(model_samples_large))}")
+                # Create a simple scatter plot instead using the valid small samples
+                plt.scatter(model_samples[:, 0], model_samples[:, 1], alpha=0.5)
+                plt.title(f'{alg}: Using small sample due to NaN/Inf in large sample')
+            else:
+                # Check if samples have finite range
+                x_range = [np.min(model_samples_large[:, 0]), np.max(model_samples_large[:, 0])]
+                y_range = [np.min(model_samples_large[:, 1]), np.max(model_samples_large[:, 1])]
+                
+                print(f"  Large sample range: x=[{x_range[0]:.3f}, {x_range[1]:.3f}], y=[{y_range[0]:.3f}, {y_range[1]:.3f}]")
+                
+                if np.isfinite(x_range).all() and np.isfinite(y_range).all() and x_range[0] != x_range[1] and y_range[0] != y_range[1]:
+                    plt.hist2d(model_samples_large[:, 0],
+                              model_samples_large[:, 1],
+                              bins=100,
+                              cmap='Blues',
+                              label='Samples')
+                    print(f"✓ {alg} hist2d plot created successfully")
+                else:
+                    print(f"WARNING: {alg} samples have degenerate range. Using scatter plot.")
+                    plt.scatter(model_samples[:, 0], model_samples[:, 1], alpha=0.5)
+                    plt.title(f'{alg}: Degenerate range, using scatter plot')
+                    
+        except Exception as e:
+            print(f"ERROR: Failed to create ECDF plot for {alg}: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to text
+            plt.text(0.5, 0.5, f'{alg}: Visualization failed\n{str(e)[:50]}...', 
+                    transform=plt.gca().transAxes, ha='center', va='center')
+        
         plt.savefig(path / f'{alg}' / f"{prefix}_ecdf.pdf")
-        del model_samples
-    # plt.legend()
+        
+        # Clean up large sample array to save memory
+        if 'model_samples_large' in locals():
+            del model_samples_large
 
 
 def test(key, x, y):
@@ -156,16 +226,27 @@ def compute_w1(key,
 def metrics_fn(key,
             target,
             id):
-    power = compute_power(
-        key, target, id, n_samples=1000, n_retries=100
-    ) 
-    sliced_w = compute_w1(key,
-                          target,
-                          id,
-                          n_samples=10000,
-                          n_retries=10)
-    return {'power': power,
-            'sliced_w': sliced_w}
+    # Add safety check for metrics computation
+    try:
+        # Test sampling first
+        test_samples = id.sample(key, 100, None)
+        if np.any(np.isnan(test_samples)) or np.any(np.isinf(test_samples)):
+            print("WARNING: Model produces NaN/Inf samples, skipping metrics")
+            return {'power': float('nan'), 'sliced_w': float('nan')}
+        
+        power = compute_power(
+            key, target, id, n_samples=1000, n_retries=100
+        ) 
+        sliced_w = compute_w1(key,
+                              target,
+                              id,
+                              n_samples=10000,
+                              n_retries=10)
+        return {'power': power,
+                'sliced_w': sliced_w}
+    except Exception as e:
+        print(f"ERROR in metrics computation: {e}")
+        return {'power': float('nan'), 'sliced_w': float('nan')}
 
 
 def extract_components_from_config(config_name):
@@ -199,8 +280,21 @@ def run(config_name: str,
     histories = defaultdict(lambda : defaultdict(lambda : defaultdict(list)))
     results = defaultdict(lambda : defaultdict(lambda : defaultdict(list)))
 
+    print(f"\n=== STARTING EXPERIMENT ===")
+    print(f"Config: {config_name}")
+    print(f"Components: {components}")
+    print(f"Algorithms: {ALGORITHMS}")
+    print(f"Problems: {list(PROBLEMS.keys())}")
+    print(f"Reruns: {n_rerun}, Updates: {n_updates}")
+    print(f"Use JIT: {use_jit}")
+
     for prob_name, problem in PROBLEMS.items():
-        for i in tqdm(range(n_rerun)):
+        print(f"\n{'='*50}")
+        print(f"PROBLEM: {prob_name}")
+        print(f"{'='*50}")
+        
+        for i in tqdm(range(n_rerun), desc=f"Rerun for {prob_name}"):
+            print(f"\n--- Rerun {i+1}/{n_rerun} for {prob_name} ---")
             trainer_key, init_key, key = jax.random.split(key, 3)
             ids = {}
             target = problem()
@@ -208,44 +302,134 @@ def run(config_name: str,
             path.mkdir(parents=True, exist_ok=True)
 
             for algo in ALGORITHMS:
+                print(f"\n=== RUNNING {algo} ===")
                 m_key, key = jax.random.split(key, 2)
-                parameters = config_to_parameters(config, algo)
-                step, carry = make_step_and_carry(
-                    init_key,
-                    parameters,
-                    target)
                 
-                metrics = compute_w1 if compute_metrics else None
-                history, carry = trainer(
-                    trainer_key,
-                    carry,
-                    target,
-                    None,
-                    step,
-                    n_updates,
-                    metrics=metrics,
-                    use_jit=use_jit,
-                )
-                ids[algo] = carry.id
-                for k, v in history.items():
-                    plt.clf()
-                    plt.plot(v, label=k)
-                    (path / f"{algo}").mkdir(exist_ok=True, parents=True)
-                    plt.savefig(path / f"{algo}" / f"iter{i}_{k}.pdf")
-                    histories[prob_name][algo][k].append(np.stack(v, axis=0))
-                metrics = metrics_fn(
-                    m_key,
-                    target,
-                    ids[algo])
-                for met_key, met_value in metrics.items():
-                    results[prob_name][algo][met_key].append(met_value)
+                try:
+                    parameters = config_to_parameters(config, algo)
+                    print(f"✓ Parameters loaded for {algo}")
+                    
+                    # Debug the algorithm parameters
+                    if hasattr(parameters, 'theta_opt_parameters'):
+                        theta_opt = parameters.theta_opt_parameters
+                        print(f"  Theta optimizer - lr: {theta_opt.lr}, optimizer: {theta_opt.optimizer}")
+                        if hasattr(theta_opt, 'clip') and theta_opt.clip:
+                            print(f"  Gradient clipping enabled: max_clip = {theta_opt.max_clip}")
 
-            visualize_key, key = jax.random.split(key, 2)
-            visualize(visualize_key,
-                      ids,
-                      target,
-                      path,
-                      prefix=f"iter{i}")
+                    if hasattr(parameters, 'r_opt_parameters'):
+                        r_opt = parameters.r_opt_parameters
+                        print(f"  R optimizer - lr: {r_opt.lr}, regularization: {r_opt.regularization}")
+                    
+                except Exception as e:
+                    print(f"ERROR: Failed to load parameters for {algo}: {e}")
+                    continue
+                
+                try:
+                    step, carry = make_step_and_carry(
+                        init_key,
+                        parameters,
+                        target)
+                    print(f"✓ Step and carry initialized for {algo}")
+                    
+                    # Check initial model state
+                    print(f"  Initial model type: {type(carry.id)}")
+                    if hasattr(carry.id, 'particles'):
+                        particles = carry.id.particles
+                        print(f"  Initial particles shape: {particles.shape}")
+                        print(f"  Initial particles stats: min={np.min(particles):.3f}, max={np.max(particles):.3f}, mean={np.mean(particles):.3f}, std={np.std(particles):.3f}")
+                        if np.any(np.isnan(particles)) or np.any(np.isinf(particles)):
+                            print("  WARNING: Initial particles contain NaN/Inf values!")
+                    
+                except Exception as e:
+                    print(f"ERROR: Failed to initialize step/carry for {algo}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+                
+                # Training with detailed error handling
+                try:
+                    print(f"  Starting training for {algo}...")
+                    metrics = compute_w1 if compute_metrics else None
+                    
+                    history, carry = trainer(
+                        trainer_key,
+                        carry,
+                        target,
+                        None,
+                        step,
+                        n_updates,
+                        metrics=metrics,
+                        use_jit=use_jit,
+                    )
+                    print(f"✓ {algo} training completed successfully")
+                    
+                    # Check final model state
+                    if hasattr(carry.id, 'particles'):
+                        final_particles = carry.id.particles
+                        print(f"  Final particles stats: min={np.min(final_particles):.3f}, max={np.max(final_particles):.3f}, mean={np.mean(final_particles):.3f}, std={np.std(final_particles):.3f}")
+                        if np.any(np.isnan(final_particles)) or np.any(np.isinf(final_particles)):
+                            print("  WARNING: Final particles contain NaN/Inf values!")
+                    
+                    # Test sampling before storing
+                    test_key, key = jax.random.split(key, 2)
+                    try:
+                        test_samples = carry.id.sample(test_key, 10, None)
+                        if np.any(np.isnan(test_samples)) or np.any(np.isinf(test_samples)):
+                            print(f"  WARNING: {algo} produces NaN/Inf samples!")
+                        else:
+                            print(f"  ✓ {algo} sampling test passed")
+                    except Exception as sample_error:
+                        print(f"  ERROR: {algo} sampling failed: {sample_error}")
+                        
+                except Exception as training_error:
+                    print(f"ERROR: {algo} training failed: {training_error}")
+                    import traceback
+                    traceback.print_exc()
+                    continue  # Skip this algorithm and continue with others
+
+                # Store results only if training succeeded
+                ids[algo] = carry.id
+                
+                # Save training history plots
+                try:
+                    for k, v in history.items():
+                        plt.clf()
+                        plt.plot(v, label=k)
+                        (path / f"{algo}").mkdir(exist_ok=True, parents=True)
+                        plt.savefig(path / f"{algo}" / f"iter{i}_{k}.pdf")
+                        histories[prob_name][algo][k].append(np.stack(v, axis=0))
+                except Exception as e:
+                    print(f"WARNING: Failed to save history for {algo}: {e}")
+                
+                # Compute metrics
+                try:
+                    metrics = metrics_fn(
+                        m_key,
+                        target,
+                        ids[algo])
+                    for met_key, met_value in metrics.items():
+                        results[prob_name][algo][met_key].append(met_value)
+                    print(f"  ✓ Metrics computed for {algo}: {metrics}")
+                except Exception as e:
+                    print(f"WARNING: Failed to compute metrics for {algo}: {e}")
+
+            # Visualization (only if we have valid models)
+            if ids:  # Only visualize if we have at least one successful algorithm
+                try:
+                    print(f"\n=== VISUALIZATION for {prob_name} rerun {i} ===")
+                    visualize_key, key = jax.random.split(key, 2)
+                    visualize(visualize_key,
+                              ids,
+                              target,
+                              path,
+                              prefix=f"iter{i}")
+                    print(f"✓ Visualization completed for {prob_name} rerun {i}")
+                except Exception as e:
+                    print(f"ERROR: Visualization failed for {prob_name} rerun {i}: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"WARNING: No successful algorithms for {prob_name} rerun {i}, skipping visualization")
     
     #dump results
     def default_to_regular(d):
@@ -267,8 +451,9 @@ def run(config_name: str,
 
         with open(parent_path / results_filename, 'wb') as f:
             pickle.dump(results, f)
-    except:
-        print("Failed to dump results")
+        print(f"✓ Results saved to {parent_path / results_filename}")
+    except Exception as e:
+        print(f"ERROR: Failed to dump results: {e}")
 
     # Create CSV comparison file
     csv_data = []
@@ -294,25 +479,30 @@ def run(config_name: str,
 
     # Save CSV file
     if csv_data:
-        df = pd.DataFrame(csv_data)
-        df.to_csv(parent_path / csv_filename, index=False)
-        print(f"CSV comparison saved to: {parent_path / csv_filename}")
+        try:
+            df = pd.DataFrame(csv_data)
+            df.to_csv(parent_path / csv_filename, index=False)
+            print(f"✓ CSV comparison saved to: {parent_path / csv_filename}")
+        except Exception as e:
+            print(f"ERROR: Failed to save CSV: {e}")
 
     if compute_metrics:
         for prob_name, problem in PROBLEMS.items():
             for algo in ALGORITHMS:
-                for metric_name, run in histories[prob_name][algo].items():
-                    run = np.stack(run, axis=0)
-                    assert run.shape == (n_rerun, n_updates)
-                    last = run[:, -1]
-                    if len(histories) > 1:
-                        mean = np.mean(last, axis=-1)
-                        std = np.std(last, axis=-1) 
-                    else:
-                        mean = last[0]
-                        std = 0
-                    print(f"{algo} on {prob_name} with {metric_name} has mean {mean:.3f} and std {std:.3f}")
+                if algo in histories[prob_name]:
+                    for metric_name, run in histories[prob_name][algo].items():
+                        run = np.stack(run, axis=0)
+                        assert run.shape == (n_rerun, n_updates)
+                        last = run[:, -1]
+                        if len(histories) > 1:
+                            mean = np.mean(last, axis=-1)
+                            std = np.std(last, axis=-1) 
+                        else:
+                            mean = last[0]
+                            std = 0
+                        print(f"{algo} on {prob_name} with {metric_name} has mean {mean:.3f} and std {std:.3f}")
     
+    print(f"\n=== FINAL RESULTS SUMMARY ===")
     for prob_name, problem in PROBLEMS.items():
         for algo in ALGORITHMS:
             if algo in results[prob_name].keys():
@@ -328,3 +518,4 @@ def run(config_name: str,
 
 if __name__ == "__main__":
     app()
+#####
