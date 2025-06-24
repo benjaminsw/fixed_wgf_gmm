@@ -31,6 +31,53 @@ import yaml
 import re
 
 
+def wgf_gmm_de_step(key, carry, target, y, optim, hyperparams):
+    """
+    Wrapper for WGF-GMM step.
+    """
+    if not WGF_GMM_AVAILABLE:
+        raise ImportError("WGF-GMM implementation is not available")
+    
+    # Handle the gmm_state attribute that WGF-GMM expects
+    if not hasattr(carry, 'gmm_state'):
+        # Create a temporary extended carry with gmm_state
+        class ExtendedCarry:
+            def __init__(self, original_carry):
+                self.id = original_carry.id
+                self.theta_opt_state = original_carry.theta_opt_state
+                self.r_opt_state = original_carry.r_opt_state
+                self.r_precon_state = original_carry.r_precon_state
+                self.gmm_state = None  # Initialize as None
+        
+        extended_carry = ExtendedCarry(carry)
+    else:
+        extended_carry = carry
+    
+    # Call the WGF-GMM implementation
+    lval, updated_extended_carry = wgf_gmm_pvi_step(
+        key=key,
+        carry=extended_carry,
+        target=target,
+        y=y,
+        optim=optim,
+        hyperparams=hyperparams,
+        lambda_reg=0.1,    # Wasserstein regularization strength
+        lr_mean=0.01,      # Learning rate for means
+        lr_cov=0.001,      # Learning rate for covariances
+        lr_weight=0.01     # Learning rate for weights
+    )
+    
+    # Convert back to standard PIDCarry format
+    updated_carry = type(carry)(
+        id=updated_extended_carry.id,
+        theta_opt_state=updated_extended_carry.theta_opt_state,
+        r_opt_state=updated_extended_carry.r_opt_state,
+        r_precon_state=updated_extended_carry.r_precon_state
+    )
+    
+    return lval, updated_carry
+
+
 def wgf_gmm_dirichlet_de_step(key, carry, target, y, optim, hyperparams):
     """
     Wrapper for WGF-GMM with Dirichlet prior step.
@@ -90,7 +137,7 @@ def gmm_pvi_de_step(key, carry, target, y, optim, hyperparams):
     return wgf_gmm_de_step(key, carry, target, y, optim, hyperparams)
 
 
-# Update DE_STEPS to include wgf_gmm_dirichlet
+# Update DE_STEPS to include all variants
 DE_STEPS = {
     'pvi': pvi_de_step,
     'wgf_gmm': wgf_gmm_de_step,
@@ -224,9 +271,7 @@ def make_step_and_carry(
     
     id_state = eqx.filter(id, id.get_filter_spec())
     
-    # Update the make_step_and_carry function to handle wgf_gmm_dirichlet
-    # Replace the existing condition around line 230:
-
+    # Handle different algorithm types
     if parameters.algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'gmm_pvi']:
         ropt_key, key = jax.random.split(key, 2)
         r_optim = make_r_opt(ropt_key,
