@@ -27,7 +27,7 @@ PROBLEMS = {
     'xshape': XShape,
 }
 
-ALGORITHMS = ['wgf_gmm_dirichlet', 'wgf_gmm','pvi'] #, 'sm', 'svi', 'uvi']
+ALGORITHMS = ['wgf_gmm_entropy', 'wgf_gmm_dirichlet', 'pvi'] #, 'sm', 'svi', 'uvi']
 
 def visualize(key, 
               ids,
@@ -258,6 +258,142 @@ def extract_components_from_config(config_name):
     return 'default'
 
 
+# Add wrapper functions for the entropy version
+def wgf_gmm_entropy_de_step(key, carry, target, y, optim, hyperparams):
+    """
+    Wrapper for WGF-GMM with entropy regularization step.
+    """
+    try:
+        from src.trainers.wgf_gmm_entropy import (
+            wgf_gmm_pvi_step_with_entropy_and_dirichlet,
+            WGFGMMHyperparams
+        )
+    except ImportError as e:
+        print(f"Error importing entropy WGF-GMM: {e}")
+        raise ImportError("WGF-GMM entropy implementation is not available")
+    
+    # Handle the gmm_state attribute that WGF-GMM expects
+    if not hasattr(carry, 'gmm_state'):
+        # Create a temporary extended carry with gmm_state
+        class ExtendedCarry:
+            def __init__(self, original_carry):
+                self.id = original_carry.id
+                self.theta_opt_state = original_carry.theta_opt_state
+                self.r_opt_state = original_carry.r_opt_state
+                self.r_precon_state = original_carry.r_precon_state
+                self.gmm_state = None  # Initialize as None
+        
+        extended_carry = ExtendedCarry(carry)
+    else:
+        extended_carry = carry
+    
+    # Set up WGF-GMM hyperparameters with entropy regularization
+    wgf_hyperparams = WGFGMMHyperparams(
+        lambda_reg=0.1,           # Wasserstein regularization
+        lambda_dirichlet=0.1,     # Dirichlet prior
+        entropy_weight=0.01,      # Entropy regularization (key addition)
+        alpha_value=0.1,          # Dirichlet concentration
+        lr_mean=0.01,            # Learning rates
+        lr_cov=0.001,
+        lr_weight=0.01,
+        prune_threshold=1e-3,     # Component pruning
+        min_components=1
+    )
+    
+    # Call the WGF-GMM implementation with entropy
+    lval, updated_extended_carry = wgf_gmm_pvi_step_with_entropy_and_dirichlet(
+        key=key,
+        carry=extended_carry,
+        target=target,
+        y=y,
+        optim=optim,
+        hyperparams=hyperparams,
+        wgf_hyperparams=wgf_hyperparams
+    )
+    
+    # Convert back to standard PIDCarry format
+    updated_carry = type(carry)(
+        id=updated_extended_carry.id,
+        theta_opt_state=updated_extended_carry.theta_opt_state,
+        r_opt_state=updated_extended_carry.r_opt_state,
+        r_precon_state=updated_extended_carry.r_precon_state
+    )
+    
+    return lval, updated_carry
+
+
+def wgf_gmm_dirichlet_de_step(key, carry, target, y, optim, hyperparams):
+    """
+    Wrapper for WGF-GMM with Dirichlet prior step.
+    """
+    try:
+        from src.trainers.wgf_gmm_dirichlet import (
+            wgf_gmm_pvi_step_with_dirichlet,
+            WGFGMMHyperparams
+        )
+    except ImportError as e:
+        print(f"Error importing Dirichlet WGF-GMM: {e}")
+        raise ImportError("WGF-GMM Dirichlet implementation is not available")
+    
+    # Handle the gmm_state attribute
+    if not hasattr(carry, 'gmm_state'):
+        class ExtendedCarry:
+            def __init__(self, original_carry):
+                self.id = original_carry.id
+                self.theta_opt_state = original_carry.theta_opt_state
+                self.r_opt_state = original_carry.r_opt_state
+                self.r_precon_state = original_carry.r_precon_state
+                self.gmm_state = None
+        
+        extended_carry = ExtendedCarry(carry)
+    else:
+        extended_carry = carry
+    
+    # Set up hyperparameters for Dirichlet version
+    wgf_hyperparams = WGFGMMHyperparams(
+        lambda_reg=0.1,
+        lambda_dirichlet=0.1,
+        alpha_value=0.1,
+        lr_mean=0.01,
+        lr_cov=0.001,
+        lr_weight=0.01,
+        prune_threshold=1e-3,
+        min_components=1
+    )
+    
+    # Call the Dirichlet implementation
+    lval, updated_extended_carry = wgf_gmm_pvi_step_with_dirichlet(
+        key=key,
+        carry=extended_carry,
+        target=target,
+        y=y,
+        optim=optim,
+        hyperparams=hyperparams,
+        wgf_hyperparams=wgf_hyperparams
+    )
+    
+    # Convert back to standard format
+    updated_carry = type(carry)(
+        id=updated_extended_carry.id,
+        theta_opt_state=updated_extended_carry.theta_opt_state,
+        r_opt_state=updated_extended_carry.r_opt_state,
+        r_precon_state=updated_extended_carry.r_precon_state
+    )
+    
+    return lval, updated_carry
+
+
+# Import PVI step
+from src.trainers.pvi import de_step as pvi_de_step
+
+# Define the step functions mapping
+STEP_FUNCTIONS = {
+    'wgf_gmm_entropy': wgf_gmm_entropy_de_step,
+    'wgf_gmm_dirichlet': wgf_gmm_dirichlet_de_step,
+    'pvi': pvi_de_step
+}
+
+
 @app.command()
 def run(config_name: str,
         seed: int=2):
@@ -306,7 +442,9 @@ def run(config_name: str,
                 m_key, key = jax.random.split(key, 2)
                 
                 try:
-                    parameters = config_to_parameters(config, algo)
+                    # Use the appropriate algorithm name for config parsing
+                    config_algo = 'wgf_gmm_dirichlet' if algo in ['wgf_gmm_entropy', 'wgf_gmm_dirichlet'] else algo
+                    parameters = config_to_parameters(config, config_algo)
                     print(f"✓ Parameters loaded for {algo}")
                     
                     # Debug the algorithm parameters
@@ -329,6 +467,17 @@ def run(config_name: str,
                         init_key,
                         parameters,
                         target)
+                    
+                    # Replace the step function with our custom implementations
+                    if algo in STEP_FUNCTIONS:
+                        def custom_step(key, carry, target, y):
+                            return STEP_FUNCTIONS[algo](
+                                key, carry, target, y, 
+                                step.__defaults__[0],  # optim 
+                                step.__defaults__[1]   # hyperparams
+                            )
+                        step = custom_step
+                    
                     print(f"✓ Step and carry initialized for {algo}")
                     
                     # Check initial model state
@@ -515,7 +664,3 @@ def run(config_name: str,
                         mean = run[0]
                         std = 0
                     print(f"{algo} on {prob_name} {met_name} has mean {mean:.3f} and std {std:.3f}")
-
-if __name__ == "__main__":
-    app()
-#####
