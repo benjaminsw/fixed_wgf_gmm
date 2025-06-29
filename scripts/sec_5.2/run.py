@@ -664,3 +664,7 @@ def run(config_name: str,
                         mean = run[0]
                         std = 0
                     print(f"{algo} on {prob_name} {met_name} has mean {mean:.3f} and std {std:.3f}")
+
+if __name__ == "__main__":
+    app()
+#####

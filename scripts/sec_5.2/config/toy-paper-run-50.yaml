@@ -76,6 +76,31 @@ wgf_gmm_dirichlet:
         agg: 'mean'
     extra_alg:
 
+wgf_gmm_entropy:
+    algorithm: 'wgf_gmm_entropy'
+    model: 
+        use_particles: True
+        n_particles: 100
+        n_components: 50
+        <<: *default_parameters
+    theta_opt:
+        <<: *default_theta_lr
+        optimizer: 'rmsprop'
+        lr_decay: False
+        regularization: 1e-8
+        clip: True
+        max_clip: 1.0
+    r_opt:
+        lr: 1e-3
+        regularization: 1e-8
+    r_precon:
+        type: 'rms'
+        max_norm: 1.
+        agg: 'mean'
+    extra_alg:
+        # Entropy-specific hyperparameters can be added here if needed
+        # The actual entropy hyperparameters are handled in the wrapper function
+
 svi:
     algorithm: 'svi'
     model:
