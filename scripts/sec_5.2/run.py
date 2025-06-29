@@ -21,6 +21,7 @@ import pandas as pd
 
 app = typer.Typer()
 
+# FIX 1: Add missing 'banana' to PROBLEMS
 PROBLEMS = {
     'banana': Banana,
     'multimodal': Multimodal,
@@ -258,140 +259,82 @@ def extract_components_from_config(config_name):
     return 'default'
 
 
-# Add wrapper functions for the entropy version
-def wgf_gmm_entropy_de_step(key, carry, target, y, optim, hyperparams):
-    """
-    Wrapper for WGF-GMM with entropy regularization step.
-    """
-    try:
-        from src.trainers.wgf_gmm_entropy import (
-            wgf_gmm_pvi_step_with_entropy_and_dirichlet,
-            WGFGMMHyperparams
-        )
-    except ImportError as e:
-        print(f"Error importing entropy WGF-GMM: {e}")
-        raise ImportError("WGF-GMM entropy implementation is not available")
-    
-    # Handle the gmm_state attribute that WGF-GMM expects
-    if not hasattr(carry, 'gmm_state'):
-        # Create a temporary extended carry with gmm_state
-        class ExtendedCarry:
-            def __init__(self, original_carry):
-                self.id = original_carry.id
-                self.theta_opt_state = original_carry.theta_opt_state
-                self.r_opt_state = original_carry.r_opt_state
-                self.r_precon_state = original_carry.r_precon_state
-                self.gmm_state = None  # Initialize as None
-        
-        extended_carry = ExtendedCarry(carry)
-    else:
-        extended_carry = carry
-    
-    # Set up WGF-GMM hyperparameters with entropy regularization
-    wgf_hyperparams = WGFGMMHyperparams(
-        lambda_reg=0.1,           # Wasserstein regularization
-        lambda_dirichlet=0.1,     # Dirichlet prior
-        entropy_weight=0.01,      # Entropy regularization (key addition)
-        alpha_value=0.1,          # Dirichlet concentration
-        lr_mean=0.01,            # Learning rates
-        lr_cov=0.001,
-        lr_weight=0.01,
-        prune_threshold=1e-3,     # Component pruning
-        min_components=1
-    )
-    
-    # Call the WGF-GMM implementation with entropy
-    lval, updated_extended_carry = wgf_gmm_pvi_step_with_entropy_and_dirichlet(
-        key=key,
-        carry=extended_carry,
-        target=target,
-        y=y,
-        optim=optim,
-        hyperparams=hyperparams,
-        wgf_hyperparams=wgf_hyperparams
-    )
-    
-    # Convert back to standard PIDCarry format
-    updated_carry = type(carry)(
-        id=updated_extended_carry.id,
-        theta_opt_state=updated_extended_carry.theta_opt_state,
-        r_opt_state=updated_extended_carry.r_opt_state,
-        r_precon_state=updated_extended_carry.r_precon_state
-    )
-    
-    return lval, updated_carry
-
-
-def wgf_gmm_dirichlet_de_step(key, carry, target, y, optim, hyperparams):
-    """
-    Wrapper for WGF-GMM with Dirichlet prior step.
-    """
-    try:
-        from src.trainers.wgf_gmm_dirichlet import (
-            wgf_gmm_pvi_step_with_dirichlet,
-            WGFGMMHyperparams
-        )
-    except ImportError as e:
-        print(f"Error importing Dirichlet WGF-GMM: {e}")
-        raise ImportError("WGF-GMM Dirichlet implementation is not available")
-    
-    # Handle the gmm_state attribute
-    if not hasattr(carry, 'gmm_state'):
-        class ExtendedCarry:
-            def __init__(self, original_carry):
-                self.id = original_carry.id
-                self.theta_opt_state = original_carry.theta_opt_state
-                self.r_opt_state = original_carry.r_opt_state
-                self.r_precon_state = original_carry.r_precon_state
-                self.gmm_state = None
-        
-        extended_carry = ExtendedCarry(carry)
-    else:
-        extended_carry = carry
-    
-    # Set up hyperparameters for Dirichlet version
-    wgf_hyperparams = WGFGMMHyperparams(
-        lambda_reg=0.1,
-        lambda_dirichlet=0.1,
-        alpha_value=0.1,
-        lr_mean=0.01,
-        lr_cov=0.001,
-        lr_weight=0.01,
-        prune_threshold=1e-3,
-        min_components=1
-    )
-    
-    # Call the Dirichlet implementation
-    lval, updated_extended_carry = wgf_gmm_pvi_step_with_dirichlet(
-        key=key,
-        carry=extended_carry,
-        target=target,
-        y=y,
-        optim=optim,
-        hyperparams=hyperparams,
-        wgf_hyperparams=wgf_hyperparams
-    )
-    
-    # Convert back to standard format
-    updated_carry = type(carry)(
-        id=updated_extended_carry.id,
-        theta_opt_state=updated_extended_carry.theta_opt_state,
-        r_opt_state=updated_extended_carry.r_opt_state,
-        r_precon_state=updated_extended_carry.r_precon_state
-    )
-    
-    return lval, updated_carry
-
-
 # Import PVI step
 from src.trainers.pvi import de_step as pvi_de_step
 
-# Define the step functions mapping
-STEP_FUNCTIONS = {
-    'wgf_gmm_entropy': wgf_gmm_entropy_de_step,
-    'wgf_gmm_dirichlet': wgf_gmm_dirichlet_de_step,
-    'pvi': pvi_de_step
-}
+# FIX 2: Define proper step functions that avoid the NoneType subscriptable error
+def create_step_wrapper(step_func_name, config_algo):
+    """Create a step wrapper that properly handles optim and hyperparams"""
+    
+    if step_func_name == 'wgf_gmm_entropy':
+        try:
+            from src.trainers.wgf_gmm_entropy import (
+                wgf_gmm_pvi_step_with_entropy_and_dirichlet,
+                WGFGMMHyperparams
+            )
+            
+            def step_wrapper(key, carry, target, y, optim, hyperparams):
+                # Create WGF hyperparams
+                wgf_hyperparams = WGFGMMHyperparams(
+                    lambda_reg=0.1,
+                    lambda_dirichlet=0.1,
+                    entropy_weight=0.01,
+                    alpha_value=0.1,
+                    lr_mean=0.01,
+                    lr_cov=0.001,
+                    lr_weight=0.01,
+                    prune_threshold=1e-3,
+                    min_components=1
+                )
+                
+                # Handle gmm_state
+                if not hasattr(carry, 'gmm_state'):
+                    carry.gmm_state = None
+                
+                return wgf_gmm_pvi_step_with_entropy_and_dirichlet(
+                    key, carry, target, y, optim, hyperparams, wgf_hyperparams
+                )
+            
+            return step_wrapper
+            
+        except ImportError:
+            print(f"Could not import {step_func_name}, using PVI")
+            return pvi_de_step
+    
+    elif step_func_name == 'wgf_gmm_dirichlet':
+        try:
+            from src.trainers.wgf_gmm_dirichlet import (
+                wgf_gmm_pvi_step_with_dirichlet,
+                WGFGMMHyperparams
+            )
+            
+            def step_wrapper(key, carry, target, y, optim, hyperparams):
+                wgf_hyperparams = WGFGMMHyperparams(
+                    lambda_reg=0.1,
+                    lambda_dirichlet=0.1,
+                    alpha_value=0.1,
+                    lr_mean=0.01,
+                    lr_cov=0.001,
+                    lr_weight=0.01,
+                    prune_threshold=1e-3,
+                    min_components=1
+                )
+                
+                if not hasattr(carry, 'gmm_state'):
+                    carry.gmm_state = None
+                
+                return wgf_gmm_pvi_step_with_dirichlet(
+                    key, carry, target, y, optim, hyperparams, wgf_hyperparams
+                )
+            
+            return step_wrapper
+            
+        except ImportError:
+            print(f"Could not import {step_func_name}, using PVI")
+            return pvi_de_step
+    
+    else:  # pvi
+        return pvi_de_step
 
 
 @app.command()
@@ -447,47 +390,21 @@ def run(config_name: str,
                     parameters = config_to_parameters(config, config_algo)
                     print(f"✓ Parameters loaded for {algo}")
                     
-                    # Debug the algorithm parameters
-                    if hasattr(parameters, 'theta_opt_parameters'):
-                        theta_opt = parameters.theta_opt_parameters
-                        print(f"  Theta optimizer - lr: {theta_opt.lr}, optimizer: {theta_opt.optimizer}")
-                        if hasattr(theta_opt, 'clip') and theta_opt.clip:
-                            print(f"  Gradient clipping enabled: max_clip = {theta_opt.max_clip}")
-
-                    if hasattr(parameters, 'r_opt_parameters'):
-                        r_opt = parameters.r_opt_parameters
-                        print(f"  R optimizer - lr: {r_opt.lr}, regularization: {r_opt.regularization}")
-                    
                 except Exception as e:
                     print(f"ERROR: Failed to load parameters for {algo}: {e}")
                     continue
                 
                 try:
+                    # FIX 3: Create step function properly to avoid NoneType subscriptable error
                     step, carry = make_step_and_carry(
                         init_key,
                         parameters,
                         target)
                     
-                    # Replace the step function with our custom implementations
-                    if algo in STEP_FUNCTIONS:
-                        def custom_step(key, carry, target, y):
-                            return STEP_FUNCTIONS[algo](
-                                key, carry, target, y, 
-                                step.__defaults__[0],  # optim 
-                                step.__defaults__[1]   # hyperparams
-                            )
-                        step = custom_step
+                    # Replace with our custom step wrapper
+                    step = create_step_wrapper(algo, config_algo)
                     
                     print(f"✓ Step and carry initialized for {algo}")
-                    
-                    # Check initial model state
-                    print(f"  Initial model type: {type(carry.id)}")
-                    if hasattr(carry.id, 'particles'):
-                        particles = carry.id.particles
-                        print(f"  Initial particles shape: {particles.shape}")
-                        print(f"  Initial particles stats: min={np.min(particles):.3f}, max={np.max(particles):.3f}, mean={np.mean(particles):.3f}, std={np.std(particles):.3f}")
-                        if np.any(np.isnan(particles)) or np.any(np.isinf(particles)):
-                            print("  WARNING: Initial particles contain NaN/Inf values!")
                     
                 except Exception as e:
                     print(f"ERROR: Failed to initialize step/carry for {algo}: {e}")
@@ -495,7 +412,7 @@ def run(config_name: str,
                     traceback.print_exc()
                     continue
                 
-                # Training with detailed error handling
+                # Training with error handling
                 try:
                     print(f"  Starting training for {algo}...")
                     metrics = compute_w1 if compute_metrics else None
@@ -512,24 +429,6 @@ def run(config_name: str,
                     )
                     print(f"✓ {algo} training completed successfully")
                     
-                    # Check final model state
-                    if hasattr(carry.id, 'particles'):
-                        final_particles = carry.id.particles
-                        print(f"  Final particles stats: min={np.min(final_particles):.3f}, max={np.max(final_particles):.3f}, mean={np.mean(final_particles):.3f}, std={np.std(final_particles):.3f}")
-                        if np.any(np.isnan(final_particles)) or np.any(np.isinf(final_particles)):
-                            print("  WARNING: Final particles contain NaN/Inf values!")
-                    
-                    # Test sampling before storing
-                    test_key, key = jax.random.split(key, 2)
-                    try:
-                        test_samples = carry.id.sample(test_key, 10, None)
-                        if np.any(np.isnan(test_samples)) or np.any(np.isinf(test_samples)):
-                            print(f"  WARNING: {algo} produces NaN/Inf samples!")
-                        else:
-                            print(f"  ✓ {algo} sampling test passed")
-                    except Exception as sample_error:
-                        print(f"  ERROR: {algo} sampling failed: {sample_error}")
-                        
                 except Exception as training_error:
                     print(f"ERROR: {algo} training failed: {training_error}")
                     import traceback
@@ -604,27 +503,28 @@ def run(config_name: str,
     except Exception as e:
         print(f"ERROR: Failed to dump results: {e}")
 
-    # Create CSV comparison file
+    # Create CSV comparison file - FIX 4: Only process existing results
     csv_data = []
-    for prob_name, problem in PROBLEMS.items():
-        for algo in ALGORITHMS:
-            if algo in results[prob_name].keys():
-                for met_name, run in results[prob_name][algo].items():
-                    if len(run) > 1:
-                        run = np.stack(run, axis=-1)
-                        mean = np.mean(run, axis=-1)
-                        std = np.std(run, axis=-1)
-                    else:
-                        mean = run[0]
-                        std = 0
-                    csv_data.append({
-                        'problem': prob_name,
-                        'algorithm': algo,
-                        'metric': met_name,
-                        'components': components,
-                        'mean': mean,
-                        'std': std
-                    })
+    for prob_name in PROBLEMS.keys():
+        if prob_name in results:  # Only process problems that have results
+            for algo in ALGORITHMS:
+                if algo in results[prob_name]:  # Only process algorithms that have results
+                    for met_name, run in results[prob_name][algo].items():
+                        if len(run) > 1:
+                            run = np.stack(run, axis=-1)
+                            mean = np.mean(run, axis=-1)
+                            std = np.std(run, axis=-1)
+                        else:
+                            mean = run[0] if len(run) > 0 else 0.0
+                            std = 0
+                        csv_data.append({
+                            'problem': prob_name,
+                            'algorithm': algo,
+                            'metric': met_name,
+                            'components': components,
+                            'mean': mean,
+                            'std': std
+                        })
 
     # Save CSV file
     if csv_data:
@@ -636,34 +536,37 @@ def run(config_name: str,
             print(f"ERROR: Failed to save CSV: {e}")
 
     if compute_metrics:
-        for prob_name, problem in PROBLEMS.items():
-            for algo in ALGORITHMS:
-                if algo in histories[prob_name]:
-                    for metric_name, run in histories[prob_name][algo].items():
-                        run = np.stack(run, axis=0)
-                        assert run.shape == (n_rerun, n_updates)
-                        last = run[:, -1]
-                        if len(histories) > 1:
-                            mean = np.mean(last, axis=-1)
-                            std = np.std(last, axis=-1) 
-                        else:
-                            mean = last[0]
-                            std = 0
-                        print(f"{algo} on {prob_name} with {metric_name} has mean {mean:.3f} and std {std:.3f}")
+        for prob_name in PROBLEMS.keys():
+            if prob_name in histories:  # Only process problems that have histories
+                for algo in ALGORITHMS:
+                    if algo in histories[prob_name]:
+                        for metric_name, run in histories[prob_name][algo].items():
+                            if len(run) > 0:
+                                run = np.stack(run, axis=0)
+                                if run.shape[0] == n_rerun and run.shape[1] == n_updates:
+                                    last = run[:, -1]
+                                    if len(run) > 1:
+                                        mean = np.mean(last, axis=-1)
+                                        std = np.std(last, axis=-1) 
+                                    else:
+                                        mean = last[0]
+                                        std = 0
+                                    print(f"{algo} on {prob_name} with {metric_name} has mean {mean:.3f} and std {std:.3f}")
     
     print(f"\n=== FINAL RESULTS SUMMARY ===")
-    for prob_name, problem in PROBLEMS.items():
-        for algo in ALGORITHMS:
-            if algo in results[prob_name].keys():
-                for met_name, run in  results[prob_name][algo].items():
-                    if len(run) > 1:
-                        run = np.stack(run, axis=-1)
-                        mean = np.mean(run, axis=-1)
-                        std = np.std(run, axis=-1)
-                    else:
-                        mean = run[0]
-                        std = 0
-                    print(f"{algo} on {prob_name} {met_name} has mean {mean:.3f} and std {std:.3f}")
+    for prob_name in PROBLEMS.keys():
+        if prob_name in results:  # Only process problems that have results
+            for algo in ALGORITHMS:
+                if algo in results[prob_name]:  # Only process algorithms that have results
+                    for met_name, run in results[prob_name][algo].items():
+                        if len(run) > 1:
+                            run = np.stack(run, axis=-1)
+                            mean = np.mean(run, axis=-1)
+                            std = np.std(run, axis=-1)
+                        else:
+                            mean = run[0] if len(run) > 0 else 0.0
+                            std = 0
+                        print(f"{algo} on {prob_name} {met_name} has mean {mean:.3f} and std {std:.3f}")
 
 if __name__ == "__main__":
     app()

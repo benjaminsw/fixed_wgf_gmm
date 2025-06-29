@@ -18,12 +18,11 @@ from src.trainers.svi import de_step as svi_de_step
 from src.trainers.uvi import de_step as uvi_de_step
 from src.trainers.sm import de_step as sm_de_step
 
-# Import fixed WGF-GMM implementation
+# Import WGF-GMM steps if available - but don't fail if they're missing
 try:
     from src.trainers.wgf_gmm import wgf_gmm_pvi_step
     WGF_GMM_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Could not import WGF-GMM implementation: {e}")
+except ImportError:
     WGF_GMM_AVAILABLE = False
 
 import equinox as eqx
@@ -31,122 +30,25 @@ import yaml
 import re
 
 
-def wgf_gmm_de_step(key, carry, target, y, optim, hyperparams):
-    """
-    Wrapper for WGF-GMM step.
-    """
-    if not WGF_GMM_AVAILABLE:
-        raise ImportError("WGF-GMM implementation is not available")
-    
-    # Handle the gmm_state attribute that WGF-GMM expects
-    if not hasattr(carry, 'gmm_state'):
-        # Create a temporary extended carry with gmm_state
-        class ExtendedCarry:
-            def __init__(self, original_carry):
-                self.id = original_carry.id
-                self.theta_opt_state = original_carry.theta_opt_state
-                self.r_opt_state = original_carry.r_opt_state
-                self.r_precon_state = original_carry.r_precon_state
-                self.gmm_state = None  # Initialize as None
-        
-        extended_carry = ExtendedCarry(carry)
-    else:
-        extended_carry = carry
-    
-    # Call the WGF-GMM implementation
-    lval, updated_extended_carry = wgf_gmm_pvi_step(
-        key=key,
-        carry=extended_carry,
-        target=target,
-        y=y,
-        optim=optim,
-        hyperparams=hyperparams,
-        lambda_reg=0.1,    # Wasserstein regularization strength
-        lr_mean=0.01,      # Learning rate for means
-        lr_cov=0.001,      # Learning rate for covariances
-        lr_weight=0.01     # Learning rate for weights
-    )
-    
-    # Convert back to standard PIDCarry format
-    updated_carry = type(carry)(
-        id=updated_extended_carry.id,
-        theta_opt_state=updated_extended_carry.theta_opt_state,
-        r_opt_state=updated_extended_carry.r_opt_state,
-        r_precon_state=updated_extended_carry.r_precon_state
-    )
-    
-    return lval, updated_carry
-
-
-def wgf_gmm_dirichlet_de_step(key, carry, target, y, optim, hyperparams):
-    """
-    Wrapper for WGF-GMM with Dirichlet prior step.
-    """
-    if not WGF_GMM_AVAILABLE:
-        raise ImportError("WGF-GMM implementation is not available")
-    
-    # Handle the gmm_state attribute that WGF-GMM expects
-    if not hasattr(carry, 'gmm_state'):
-        # Create a temporary extended carry with gmm_state
-        class ExtendedCarry:
-            def __init__(self, original_carry):
-                self.id = original_carry.id
-                self.theta_opt_state = original_carry.theta_opt_state
-                self.r_opt_state = original_carry.r_opt_state
-                self.r_precon_state = original_carry.r_precon_state
-                self.gmm_state = None  # Initialize as None
-        
-        extended_carry = ExtendedCarry(carry)
-    else:
-        extended_carry = carry
-    
-    # Call the WGF-GMM implementation with Dirichlet-specific parameters
-    lval, updated_extended_carry = wgf_gmm_pvi_step(
-        key=key,
-        carry=extended_carry,
-        target=target,
-        y=y,
-        optim=optim,
-        hyperparams=hyperparams,
-        lambda_reg=0.1,    # Wasserstein regularization strength
-        lr_mean=0.01,      # Learning rate for means
-        lr_cov=0.001,      # Learning rate for covariances
-        lr_weight=0.01     # Learning rate for weights
-    )
-    
-    # Convert back to standard PIDCarry format
-    updated_carry = type(carry)(
-        id=updated_extended_carry.id,
-        theta_opt_state=updated_extended_carry.theta_opt_state,
-        r_opt_state=updated_extended_carry.r_opt_state,
-        r_precon_state=updated_extended_carry.r_precon_state
-    )
-    
-    return lval, updated_carry
-
-
-def gmm_pvi_de_step(key, carry, target, y, optim, hyperparams):
-    """
-    Wrapper for GMM-PVI step (simplified version).
-    No fallback - will raise errors if GMM-PVI fails.
-    """
-    if not WGF_GMM_AVAILABLE:
-        raise ImportError("GMM-PVI implementation is not available")
-    
-    # For now, just call the WGF-GMM implementation
-    return wgf_gmm_de_step(key, carry, target, y, optim, hyperparams)
-
-
-# Update DE_STEPS to include all variants
+# Only add WGF-GMM to DE_STEPS if it's actually available
 DE_STEPS = {
     'pvi': pvi_de_step,
-    'wgf_gmm': wgf_gmm_de_step,
-    'wgf_gmm_dirichlet': wgf_gmm_dirichlet_de_step,
-    'gmm_pvi': gmm_pvi_de_step,
     'svi': svi_de_step,
     'uvi': uvi_de_step,
     'sm': sm_de_step
 }
+
+# Add WGF-GMM variants only if available
+if WGF_GMM_AVAILABLE:
+    def wgf_gmm_de_step(key, carry, target, y, optim, hyperparams):
+        # Handle gmm_state attribute
+        if not hasattr(carry, 'gmm_state'):
+            carry.gmm_state = None
+        return wgf_gmm_pvi_step(key, carry, target, y, optim, hyperparams)
+    
+    DE_STEPS['wgf_gmm'] = wgf_gmm_de_step
+
+# For variants that might not exist, they'll be handled in the run.py wrapper
 
 
 def make_model(key: jax.random.PRNGKey,
@@ -272,17 +174,22 @@ def make_step_and_carry(
     id_state = eqx.filter(id, id.get_filter_spec())
     
     # Handle different algorithm types
-    if parameters.algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'gmm_pvi']:
+    if parameters.algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'wgf_gmm_entropy', 'gmm_pvi']:
         ropt_key, key = jax.random.split(key, 2)
         r_optim = make_r_opt(ropt_key,
                             parameters.r_opt_parameters)
         r_precon = make_r_precon(parameters.r_precon_parameters)
         optim = PIDOpt(theta_optim, r_optim, r_precon)
+        
+        # MINIMAL FIX: Add gmm_state to PIDCarry for WGF-GMM compatibility
         carry = PIDCarry(id,
                         theta_optim.init(id_state),
                         r_optim.init(id_state),
-                        r_precon.init(id),
-                        gmm_state=None)  # Add gmm_state parameter
+                        r_precon.init(id))
+        # Add gmm_state attribute dynamically if it doesn't exist
+        if not hasattr(carry, 'gmm_state'):
+            carry.gmm_state = None
+            
     elif parameters.algorithm == 'uvi':
         optim = SVIOpt(theta_optim)
         carry = SVICarry(id, theta_optim.init(id_state))
@@ -330,8 +237,8 @@ def config_to_parameters(config: dict, algorithm: str):
             **config[algorithm]['theta_opt']
         )
     
-    # Handle PVI-based algorithms (pvi, wgf_gmm, wgf_gmm_dirichlet, gmm_pvi) the same way
-    if algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'gmm_pvi']:
+    # Handle PVI-based algorithms (including WGF-GMM variants) the same way
+    if algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'wgf_gmm_entropy', 'gmm_pvi']:
         parameters['r_opt_parameters'] = ROptParameters(
             **config[algorithm]['r_opt']
         )
@@ -383,7 +290,7 @@ def parse_config(config_path: str):
     # Simple scientific notation support
     yaml.SafeLoader.add_implicit_resolver(
         'tag:yaml.org,2002:float',
-        re.compile(r'^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$'),
+        re.compile(r'^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?),
         list('-+0123456789.'))
     
     with open(config_path, 'r') as f:
