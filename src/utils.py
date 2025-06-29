@@ -287,10 +287,10 @@ def parse_config(config_path: str):
         yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
         none_to_dict)
     
-    # Simple scientific notation support
+    # Simple scientific notation support - FIXED: Added missing closing quote
     yaml.SafeLoader.add_implicit_resolver(
         'tag:yaml.org,2002:float',
-        re.compile(r'^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?),
+        re.compile(r'^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?'),
         list('-+0123456789.'))
     
     with open(config_path, 'r') as f:
