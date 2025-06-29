@@ -25,6 +25,18 @@ try:
 except ImportError:
     WGF_GMM_AVAILABLE = False
 
+try:
+    from src.trainers.wgf_gmm_dirichlet import wgf_gmm_pvi_step_with_dirichlet
+    WGF_GMM_DIRICHLET_AVAILABLE = True
+except ImportError:
+    WGF_GMM_DIRICHLET_AVAILABLE = False
+
+try:
+    from src.trainers.wgf_gmm_entropy import wgf_gmm_pvi_step_with_entropy_and_dirichlet, WGFGMMHyperparams
+    WGF_GMM_ENTROPY_AVAILABLE = True
+except ImportError:
+    WGF_GMM_ENTROPY_AVAILABLE = False
+
 import equinox as eqx
 import yaml
 import re
@@ -48,7 +60,50 @@ if WGF_GMM_AVAILABLE:
     
     DE_STEPS['wgf_gmm'] = wgf_gmm_de_step
 
-# For variants that might not exist, they'll be handled in the run.py wrapper
+if WGF_GMM_DIRICHLET_AVAILABLE:
+    def wgf_gmm_dirichlet_de_step(key, carry, target, y, optim, hyperparams):
+        # Handle gmm_state attribute
+        if not hasattr(carry, 'gmm_state'):
+            carry.gmm_state = None
+        
+        # Create default WGF hyperparameters
+        wgf_hyperparams = WGFGMMHyperparams(
+            lambda_reg=0.1,
+            lambda_dirichlet=0.1,
+            alpha_value=0.1,
+            lr_mean=0.01,
+            lr_cov=0.001,
+            lr_weight=0.01,
+            prune_threshold=1e-3,
+            min_components=1
+        )
+        
+        return wgf_gmm_pvi_step_with_dirichlet(key, carry, target, y, optim, hyperparams, wgf_hyperparams)
+    
+    DE_STEPS['wgf_gmm_dirichlet'] = wgf_gmm_dirichlet_de_step
+
+if WGF_GMM_ENTROPY_AVAILABLE:
+    def wgf_gmm_entropy_de_step(key, carry, target, y, optim, hyperparams):
+        # Handle gmm_state attribute
+        if not hasattr(carry, 'gmm_state'):
+            carry.gmm_state = None
+        
+        # Create default WGF hyperparameters with entropy
+        wgf_hyperparams = WGFGMMHyperparams(
+            lambda_reg=0.1,
+            lambda_dirichlet=0.1,
+            entropy_weight=0.01,
+            alpha_value=0.1,
+            lr_mean=0.01,
+            lr_cov=0.001,
+            lr_weight=0.01,
+            prune_threshold=1e-3,
+            min_components=1
+        )
+        
+        return wgf_gmm_pvi_step_with_entropy_and_dirichlet(key, carry, target, y, optim, hyperparams, wgf_hyperparams)
+    
+    DE_STEPS['wgf_gmm_entropy'] = wgf_gmm_entropy_de_step
 
 
 def make_model(key: jax.random.PRNGKey,

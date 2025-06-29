@@ -263,7 +263,7 @@ def extract_components_from_config(config_name):
 from src.trainers.pvi import de_step as pvi_de_step
 
 # FIX 2: Define proper step functions that avoid the NoneType subscriptable error
-def create_step_wrapper(step_func_name, config_algo):
+def create_step_wrapper(step_func_name, algo):
     """Create a step wrapper that properly handles optim and hyperparams"""
     
     if step_func_name == 'wgf_gmm_entropy':
@@ -402,7 +402,7 @@ def run(config_name: str,
                         target)
                     
                     # Replace with our custom step wrapper
-                    step = create_step_wrapper(algo, config_algo)
+                    step = create_step_wrapper(algo, algo)
                     
                     print(f"✓ Step and carry initialized for {algo}")
                     
