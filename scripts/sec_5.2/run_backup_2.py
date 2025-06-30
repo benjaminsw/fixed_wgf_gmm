@@ -27,8 +27,7 @@ PROBLEMS = {
     'xshape': XShape,
 }
 
-# Updated algorithms list to support entropy variant
-ALGORITHMS = ['wgf_gmm_entropy', 'wgf_gmm_dirichlet', 'wgf_gmm', 'pvi'] #, 'sm', 'svi', 'uvi']
+ALGORITHMS = ['wgf_gmm_dirichlet', 'wgf_gmm','pvi'] #, 'sm', 'svi', 'uvi']
 
 def visualize(key, 
               ids,

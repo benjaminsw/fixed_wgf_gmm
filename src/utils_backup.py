@@ -18,7 +18,7 @@ from src.trainers.svi import de_step as svi_de_step
 from src.trainers.uvi import de_step as uvi_de_step
 from src.trainers.sm import de_step as sm_de_step
 
-# Import basic WGF-GMM implementation (like in utils_backup.py)
+# Import fixed WGF-GMM implementation
 try:
     from src.trainers.wgf_gmm import wgf_gmm_pvi_step
     WGF_GMM_AVAILABLE = True
@@ -33,7 +33,7 @@ import re
 
 def wgf_gmm_de_step(key, carry, target, y, optim, hyperparams):
     """
-    Wrapper for basic WGF-GMM step.
+    Wrapper for WGF-GMM step.
     """
     if not WGF_GMM_AVAILABLE:
         raise ImportError("WGF-GMM implementation is not available")
@@ -53,7 +53,7 @@ def wgf_gmm_de_step(key, carry, target, y, optim, hyperparams):
     else:
         extended_carry = carry
     
-    # Call the basic WGF-GMM implementation
+    # Call the WGF-GMM implementation
     lval, updated_extended_carry = wgf_gmm_pvi_step(
         key=key,
         carry=extended_carry,
@@ -81,7 +81,6 @@ def wgf_gmm_de_step(key, carry, target, y, optim, hyperparams):
 def wgf_gmm_dirichlet_de_step(key, carry, target, y, optim, hyperparams):
     """
     Wrapper for WGF-GMM with Dirichlet prior step.
-    Uses the same basic implementation as wgf_gmm_de_step.
     """
     if not WGF_GMM_AVAILABLE:
         raise ImportError("WGF-GMM implementation is not available")
@@ -101,55 +100,7 @@ def wgf_gmm_dirichlet_de_step(key, carry, target, y, optim, hyperparams):
     else:
         extended_carry = carry
     
-    # Call the same WGF-GMM implementation with Dirichlet-specific parameters
-    lval, updated_extended_carry = wgf_gmm_pvi_step(
-        key=key,
-        carry=extended_carry,
-        target=target,
-        y=y,
-        optim=optim,
-        hyperparams=hyperparams,
-        lambda_reg=0.1,    # Wasserstein regularization strength
-        lr_mean=0.01,      # Learning rate for means
-        lr_cov=0.001,      # Learning rate for covariances
-        lr_weight=0.01     # Learning rate for weights
-    )
-    
-    # Convert back to standard PIDCarry format
-    updated_carry = type(carry)(
-        id=updated_extended_carry.id,
-        theta_opt_state=updated_extended_carry.theta_opt_state,
-        r_opt_state=updated_extended_carry.r_opt_state,
-        r_precon_state=updated_extended_carry.r_precon_state
-    )
-    
-    return lval, updated_carry
-
-
-def wgf_gmm_entropy_de_step(key, carry, target, y, optim, hyperparams):
-    """
-    Wrapper for WGF-GMM with entropy regularization.
-    Uses the same basic implementation as wgf_gmm_de_step.
-    """
-    if not WGF_GMM_AVAILABLE:
-        raise ImportError("WGF-GMM implementation is not available")
-    
-    # Handle the gmm_state attribute that WGF-GMM expects
-    if not hasattr(carry, 'gmm_state'):
-        # Create a temporary extended carry with gmm_state
-        class ExtendedCarry:
-            def __init__(self, original_carry):
-                self.id = original_carry.id
-                self.theta_opt_state = original_carry.theta_opt_state
-                self.r_opt_state = original_carry.r_opt_state
-                self.r_precon_state = original_carry.r_precon_state
-                self.gmm_state = None  # Initialize as None
-        
-        extended_carry = ExtendedCarry(carry)
-    else:
-        extended_carry = carry
-    
-    # Call the same WGF-GMM implementation with entropy-specific parameters
+    # Call the WGF-GMM implementation with Dirichlet-specific parameters
     lval, updated_extended_carry = wgf_gmm_pvi_step(
         key=key,
         carry=extended_carry,
@@ -177,20 +128,20 @@ def wgf_gmm_entropy_de_step(key, carry, target, y, optim, hyperparams):
 def gmm_pvi_de_step(key, carry, target, y, optim, hyperparams):
     """
     Wrapper for GMM-PVI step (simplified version).
+    No fallback - will raise errors if GMM-PVI fails.
     """
     if not WGF_GMM_AVAILABLE:
         raise ImportError("GMM-PVI implementation is not available")
     
-    # For now, just call the basic WGF-GMM implementation
+    # For now, just call the WGF-GMM implementation
     return wgf_gmm_de_step(key, carry, target, y, optim, hyperparams)
 
 
-# Update DE_STEPS to include all variants (like in utils_backup.py)
+# Update DE_STEPS to include all variants
 DE_STEPS = {
     'pvi': pvi_de_step,
     'wgf_gmm': wgf_gmm_de_step,
     'wgf_gmm_dirichlet': wgf_gmm_dirichlet_de_step,
-    'wgf_gmm_entropy': wgf_gmm_entropy_de_step,
     'gmm_pvi': gmm_pvi_de_step,
     'svi': svi_de_step,
     'uvi': uvi_de_step,
@@ -320,8 +271,8 @@ def make_step_and_carry(
     
     id_state = eqx.filter(id, id.get_filter_spec())
     
-    # Handle different algorithm types (like in utils_backup.py)
-    if parameters.algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'wgf_gmm_entropy', 'gmm_pvi']:
+    # Handle different algorithm types
+    if parameters.algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'gmm_pvi']:
         ropt_key, key = jax.random.split(key, 2)
         r_optim = make_r_opt(ropt_key,
                             parameters.r_opt_parameters)
@@ -331,7 +282,7 @@ def make_step_and_carry(
                         theta_optim.init(id_state),
                         r_optim.init(id_state),
                         r_precon.init(id),
-                        gmm_state=None)  # Add gmm_state parameter like in utils_backup.py
+                        gmm_state=None)  # Add gmm_state parameter
     elif parameters.algorithm == 'uvi':
         optim = SVIOpt(theta_optim)
         carry = SVICarry(id, theta_optim.init(id_state))
@@ -379,8 +330,8 @@ def config_to_parameters(config: dict, algorithm: str):
             **config[algorithm]['theta_opt']
         )
     
-    # Handle PVI-based algorithms (like in utils_backup.py)
-    if algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'wgf_gmm_entropy', 'gmm_pvi']:
+    # Handle PVI-based algorithms (pvi, wgf_gmm, wgf_gmm_dirichlet, gmm_pvi) the same way
+    if algorithm in ['pvi', 'wgf_gmm', 'wgf_gmm_dirichlet', 'gmm_pvi']:
         parameters['r_opt_parameters'] = ROptParameters(
             **config[algorithm]['r_opt']
         )
