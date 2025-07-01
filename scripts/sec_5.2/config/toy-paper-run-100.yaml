@@ -7,7 +7,7 @@ default_theta_lr: &default_theta_lr
     lr: 1e-2
 
 experiment:
-    n_reruns: 10
+    n_reruns: 5 #10
     n_updates: 1000
     name: 'default'
     compute_metrics: False
